@@ -5,7 +5,7 @@ tiny and dependency-free (standard library only): it carries no HTTP transport,
 no vendor SDK, and no application runtime, so any layer can depend on it without
 inheriting the platform's weight.
 
-It owns the three things the [GestaltWorkframe](https://github.com/GestaltWorks/GestaltWorkframe)
+It owns the three things the [GestaltWorkframe](https://github.com/WorkflowtechAI/GestaltWorkframe)
 platform and the GestaltWorkframeEDU middleware must agree on:
 
 1. **Env var names** (`gestalt_llm_contract.env`) — the canonical names and
