@@ -461,7 +461,7 @@ This repository is dual-licensed. The split is documented in
   published. Hosting Gestalt Workframe (or a fork) as a managed/SaaS
   offering, reselling it, or otherwise offering the same or substantially
   similar functionality to third parties is a Competing Use and requires a
-  commercial license from Gestalt Works. See [COMMERCIAL.md](COMMERCIAL.md)
+  commercial license from Eudai Gestalt Integrations. See [COMMERCIAL.md](COMMERCIAL.md)
   for the commercial-use policy and implementation-services details.
 - **Connector protocol and reference connectors** under `packages/` are
   distributed under the [Apache License, Version 2.0](packages/LICENSE) so

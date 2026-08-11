@@ -10,11 +10,11 @@ converts to Apache License 2.0.
 The connector protocol and reference connector implementations under
 `packages/` are a separate carve-out: they are distributed under the
 [Apache License, Version 2.0](packages/LICENSE) and do not require a
-commercial license from Gestalt Works for any use. This page applies only
+commercial license from Eudai Gestalt Integrations for any use. This page applies only
 to the FSL-licensed framework; see `NOTICE` for the precise directory map.
 
 This page covers the cases where you need a separate commercial arrangement
-with Gestalt Works.
+with Eudai Gestalt Integrations.
 
 ## When you do NOT need a commercial license
 
@@ -34,12 +34,12 @@ under Apache License 2.0.
 
 ## When you DO need a commercial license
 
-A commercial license from Gestalt Works is required for any **Competing
+A commercial license from Eudai Gestalt Integrations is required for any **Competing
 Use**, which the FSL defines as making the Software available to others in
 a commercial product or service that:
 
 1. substitutes for the Software,
-2. substitutes for any other product or service Gestalt Works offers using
+2. substitutes for any other product or service Eudai Gestalt Integrations offers using
    the Software, or
 3. offers the same or substantially similar functionality as the Software.
 
@@ -59,7 +59,7 @@ later.
 
 ## Implementation services
 
-Gestalt Works offers paid implementation, integration, deployment, and
+Eudai Gestalt Integrations offers paid implementation, integration, deployment, and
 support services for Gestalt Workframe. Engagements typically include:
 
 - Branded deployment bundle design and configuration.
@@ -68,7 +68,7 @@ support services for Gestalt Workframe. Engagements typically include:
 - Knowledge-base ingestion, curation, and discovery configuration.
 - Curriculum and education-platform setup.
 - Provider routing, cloud-spend, and observability configuration.
-- Hosting on Gestalt Works infrastructure, or hand-off to a customer-owned
+- Hosting on Eudai Gestalt Integrations infrastructure, or hand-off to a customer-owned
   environment.
 
 Implementation engagements include the commercial-use grant required for

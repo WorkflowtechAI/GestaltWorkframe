@@ -1,5 +1,5 @@
 <!--
-Copyright 2026 Gestalt Works
+Copyright 2026 Eudai Gestalt Integrations
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ limitations under the License.
 # Gestalt Connector Protocol
 
 This package defines the canonical `Document` contract and the connector
-interface used by Gestalt Works deployments.
+interface used by Eudai Gestalt Integrations deployments.
 
 ## Schema evolution
 
