@@ -79,8 +79,8 @@ the deployed instance, scoped to the customer named in the engagement.
 To request a commercial license, scope an implementation engagement, or
 clarify whether your use case is a Permitted Purpose, contact:
 
-- Web: https://gestaltworks.ai
-- Email: licensing@gestaltworks.ai
+- Web: https://workflowtech.ai
+- Email: Wizard@workflowtech.ai
 
 Please include a short description of how you intend to use Gestalt
 Workframe, the expected deployment shape (internal, hosted, customer-
