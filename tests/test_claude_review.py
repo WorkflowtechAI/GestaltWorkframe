@@ -54,10 +54,13 @@ def test_call_claude_appends_usage_summary(monkeypatch):
             return False
 
         def read(self):
-            return b'{"content":[{"text":"Looks good."}],"usage":{"input_tokens":1000,"output_tokens":100}}'
+            # `"type":"text"` required since 2026-08-20; see the note below.
+            return b'{"content":[{"type":"text","text":"Looks good."}],"usage":{"input_tokens":1000,"output_tokens":100}}'
 
     def fake_urlopen(request, timeout):
-        assert timeout == 60
+        # 300, not 60: raised on 2026-08-20 when reviews grew a thinking
+        # block and 60s started truncating them mid-answer.
+        assert timeout == 300
         assert review.DEFAULT_CLAUDE_REVIEW_MODEL.encode("utf-8") in request.data
         return Response()
 
@@ -82,7 +85,10 @@ def test_call_claude_uses_full_codebase_prompt(monkeypatch):
             return False
 
         def read(self):
-            return b'{"content":[{"text":"Full review."}],"usage":{"input_tokens":1000,"output_tokens":100}}'
+            # `"type":"text"` is required since 2026-08-20: the reviewer
+            # selects text blocks by type so a thinking block cannot be
+            # mistaken for the answer. Without it this mock reads as empty.
+            return b'{"content":[{"type":"text","text":"Full review."}],"usage":{"input_tokens":1000,"output_tokens":100}}'
 
     def fake_urlopen(request, timeout):
         body = request.data.decode("utf-8")
@@ -127,8 +133,21 @@ def test_codebase_snapshot_prioritizes_command_control_files(monkeypatch, tmp_pa
 
     snapshot = review.codebase_snapshot()
 
-    assert snapshot.index("--- FILE: gestaltworkframe/api/main.py ---") < snapshot.index("--- FILE: core/router.py ---")
-    assert snapshot.index("--- FILE: llm/control_local_model.ps1 ---") < snapshot.index("--- FILE: core/router.py ---")
+    # THE WHOLE ORDER, as a chain. The previous version asserted that
+    # gestaltworkframe/api/main.py sorted before core/router.py, which has
+    # been false since the 2026-08-20 priority change -- core/ outranks the
+    # app package now. Pinning the full chain states what the priority list
+    # IS, rather than two facts about three of its four entries.
+    order = [
+        "--- FILE: core/router.py ---",
+        "--- FILE: gestaltworkframe/api/main.py ---",
+        "--- FILE: llm/control_local_model.ps1 ---",
+        "--- FILE: tests/test_api_main.py ---",
+    ]
+    positions = [snapshot.index(marker) for marker in order]
+    assert positions == sorted(positions), (
+        "snapshot priority order changed; expected " + " < ".join(order)
+    )
 
 
 def test_usage_summary_estimates_cost(monkeypatch):

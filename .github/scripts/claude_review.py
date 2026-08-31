@@ -212,6 +212,11 @@ def usage_summary(model: str, usage: dict[str, int] | None) -> str:
         f"`{cache_creation_multiplier:g}x` cache creation, `{cache_read_multiplier:g}x` cache read",
         "- Anthropic billing is the source of truth.",
     ])
+    if model != DEFAULT_CLAUDE_REVIEW_MODEL:
+        lines.append(
+            f"- Pricing defaults are for `{DEFAULT_CLAUDE_REVIEW_MODEL}`; "
+            "override pricing env vars if needed."
+        )
     return "\n".join(lines)
 
 

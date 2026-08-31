@@ -252,9 +252,22 @@ def test_repository_gemini_cloud_profile_is_api_backed_not_local():
     assert profile["enabled_by_default"] is False
 
 
-def test_claude_review_default_matches_sonnet_46_profile_and_workflow():
-    data = json.loads((ROOT / "llm" / "profiles.json").read_text(encoding="utf-8"))
-    profile_model = data["profiles"]["claude-sonnet-4-6"]["model"]
+def test_claude_review_default_matches_the_workflow():
+    # WHAT THIS USED TO ASSERT, AND WHY IT NO LONGER CAN. It pinned a
+    # three-way match between the reviewer's default, the profiles.json key
+    # "claude-sonnet-4-6", and the workflow default. The reviewer moved to
+    # claude-sonnet-5 on 2026-08-20 and the pin has failed on every push
+    # since, holding main red.
+    #
+    # The pin was never load-bearing: claude_review.py does not read
+    # profiles.json (grep returns zero), so the two were not coupled at
+    # runtime -- and claude-sonnet-5 has no entry in profiles.json at all.
+    # Asserting the match would require inventing pricing for a profile
+    # nobody has written.
+    #
+    # What survives is the half that is real and does catch drift: the
+    # script default and the workflow default must agree, or CI reviews
+    # silently run a different model than the script prices for.
 
     script_path = ROOT / ".github" / "scripts" / "claude_review.py"
     spec = importlib.util.spec_from_file_location("claude_review", script_path)
@@ -266,5 +279,4 @@ def test_claude_review_default_matches_sonnet_46_profile_and_workflow():
     workflow_line = next(line for line in workflow.splitlines() if "CLAUDE_REVIEW_MODEL:" in line)
     workflow_default = workflow_line.split("'")[1]
 
-    assert review.DEFAULT_CLAUDE_REVIEW_MODEL == profile_model
-    assert workflow_default == profile_model
+    assert workflow_default == review.DEFAULT_CLAUDE_REVIEW_MODEL
