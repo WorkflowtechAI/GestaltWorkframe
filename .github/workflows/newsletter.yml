@@ -21,7 +21,7 @@ concurrency:
 jobs:
   run-newsletter-cycle:
     name: Trigger production newsletter cadence check
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
     steps:
       - name: Call newsletter cycle endpoint
         env:

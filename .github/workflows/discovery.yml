@@ -15,7 +15,7 @@ concurrency:
 jobs:
   run-discovery:
     name: Trigger production discovery pass
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
     steps:
       - name: Call discovery scheduler endpoint
         env:

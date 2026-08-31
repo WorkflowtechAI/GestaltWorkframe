@@ -16,7 +16,7 @@ concurrency:
 jobs:
   run-retention:
     name: Trigger production retention sweep
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
     steps:
       - name: Call retention sweep endpoint
         env:
