@@ -22,7 +22,7 @@ env:
 jobs:
   deploy:
     name: Deploy development to VPS
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
     environment: development
     steps:
       - name: Checkout
