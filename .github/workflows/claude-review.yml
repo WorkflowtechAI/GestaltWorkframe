@@ -1,317 +1,309 @@
 # AUTO-SYNCED from the LLM Builder Kit. Do not edit here; edit the kit source and re-run sync-standards.ps1.
 
-# Claude code review. Posts a review comment on every PR.
+# Claude code review. Claude Code reviews every PR with the whole repo in view
+# and posts one review comment; the check fails only on a blocking finding or
+# when no review could run.
 #
 # A repo gets this file two ways: operator-tools/Bootstrap-Repo.ps1 at onboarding,
 # or by naming claude-review in docs/standards/.standards-include, which puts it
 # on the same drift check as every other vendored standard.
 #
-# Needs ANTHROPIC_API_KEY, as an organization secret visible to the repo or a repo
-# secret. Bootstrap-Repo / Sync-Secrets sets the repo form; a repo that opted in
-# later has to be granted the key, and the first step here fails loudly until it
-# is. Fork PRs get no secret access.
+# TWO WAYS TO PAY, TRIED IN ORDER.
+#   1. CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`): runs on the operator's
+#      Claude subscription and draws on its usage. Model: vars.CLAUDE_REVIEW_MODEL,
+#      default `sonnet`.
+#   2. ANTHROPIC_API_KEY: runs only when (1) is missing or did not finish, which
+#      is what happens when the subscription is out of usage. Billed to the key.
+#      Model: vars.CLAUDE_REVIEW_FALLBACK_MODEL when set. Otherwise a repo that
+#      routes through the kit's LiteLLM broker (vars.ANTHROPIC_BASE_URL set) gets
+#      `openrouter/anthropic/claude-haiku-4.5`, which the broker sends to
+#      OpenRouter first and to Anthropic second; a repo calling Anthropic directly
+#      gets `claude-haiku-4-5`.
+#      KNOWN LIMIT, measured 2026-11-14: Anthropic answers any request carrying
+#      Claude Code's `claude-code-20250219` beta or `claude-cli` user agent with
+#      HTTP 400 "credit balance is too low" on the operator's API keys, while plain
+#      calls on the same key succeed and the org has credit. So this route works
+#      only through the broker's OpenRouter alias; a repo calling Anthropic
+#      directly has no working fallback while that holds.
+# When neither can run, the check goes red and quotes the API's answer: the review
+# is dark until the subscription has usage again. Both are repo
+# secrets set by operator-tools/Sync-Secrets.ps1. Fork PRs get no secrets and are
+# not reviewed; Dependabot PRs get no Actions secrets and are skipped.
 #
-# Third-party actions are SHA-pinned, the same supply-chain rule as
-# ci-standards.yml: the tag comment is for humans, the SHA is what runs. To bump
-# one, resolve the new tag to its COMMIT with
-# `gh api repos/<owner>/<action>/commits/<tag> --jq .sha` (for an annotated tag,
-# `git/ref/tags/<tag>` is the tag object, not the commit), then update the SHA
-# and the comment together.
+# The model only reads: the repo, the diff, the PR. It returns a structured
+# verdict (the contract in docs/standards/review-standards.md) and the comment
+# text, and the deterministic step at the end posts the comment and decides the
+# check. The model never writes to the PR or the repo.
+#
+# Third-party actions are SHA-pinned: the tag comment is for humans, the SHA is
+# what runs. To bump one, resolve the new tag to its COMMIT (an annotated tag's
+# `git/ref/tags/<tag>` is the tag object; follow it with `git/tags/<sha>`), then
+# update the SHA and the comment together.
 name: Claude code review
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
-    inputs:
-      review_scope:
-        description: "Review scope: diff or full codebase"
-        required: false
-        default: "diff"
-        type: choice
-        options:
-          - diff
-          - full
 
 permissions:
   contents: read
-  issues: write
   pull-requests: write
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.sha }}
+  # Not "claude-review-<n>": the retired pull_request_target workflow used that
+  # group, and while both existed on kit #359 the old one cancelled this one.
+  group: claude-code-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: Claude code review
-    # Hosted for a PUBLIC repo, the egi-vps pool for everything else.
-    #
-    # The org runner group excludes public repositories, so a public repo's job
-    # on [self-hosted, ...] queues forever with correct labels and idle runners:
-    # on claude-cert-examprep every review after the pool move sat queued, 8 h
-    # and then 12 h, and cancel/reopen could not help. GitHub-hosted minutes are
-    # free for public repos, and opening the pool to them would let fork PRs run
-    # code on the VPS, so public goes hosted. The test is the string 'public' on
-    # purpose: a missing or unknown visibility falls to the pool, which is the
-    # private-repo default and stays a visibly queued, never-green check on a
-    # public repo rather than silently billing a private one. (A queued check is
-    # loud in the sense that it never goes green, not in the sense of an
-    # immediate failure — GitHub times a job like that out, it does not fail it
-    # fast.) test_claude_review.py pins this exact line.
+    # Hosted for a PUBLIC repo, the egi-vps pool for everything else: the org
+    # runner group excludes public repositories, and opening the pool to them
+    # would let fork PRs run code on the VPS. A missing or unknown visibility
+    # falls to the pool.
     runs-on: ${{ github.event.repository.visibility == 'public' && 'ubuntu-latest' || fromJSON('["self-hosted","Linux","X64"]') }}
-    # Two guards, and they answer different questions.
-    #
-    # SECRETS: only same-repo PRs run with the key; fork PRs never see it.
-    #
-    # DRAFTS: a push to a draft PR is not reviewed. A draft cannot merge, so
-    # reviewing each push to one spends on a diff nobody can ship — and
-    # iterate-in-draft is exactly where pushes cluster. Nothing is lost:
-    # `ready_for_review` is in the trigger list above, so marking a PR ready
-    # reviews the state that can actually merge, and every push after that is
-    # reviewed as before.
-    #
-    # Measured in the kit before this: 27 review runs in one day against a
-    # $5/day capped key at ~$0.18 a review — the ceiling almost exactly. Most
-    # were legitimate re-reviews of real changes and worth their cost. The draft
-    # ones were not.
+    timeout-minutes: 30
+    # Same-repo PRs only (fork PRs never see a secret), no drafts (a draft cannot
+    # merge; `ready_for_review` reviews it when it can), no Dependabot (no
+    # Actions secrets reach its PRs).
     if: >-
-      (github.event_name != 'pull_request_target' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      github.event.pull_request.draft != true
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft != true &&
+      github.actor != 'dependabot[bot]'
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      # GitHub sets github.actor. The gate below must key its exemption on THIS
-      # and never on ANTHROPIC_API_KEY being empty: "no key" is also what a
-      # broken secret looks like, and excusing that is how seven constraints
-      # reported green for three days on 2026-08-27.
-      IS_DEPENDABOT: ${{ github.actor == 'dependabot[bot]' }}
-      # Route reviews through a LiteLLM broker so CI spend sits under a capped
-      # virtual key. Unset, the script calls Anthropic directly, as before. A
-      # repository VARIABLE, not a secret: a base URL is not sensitive, and a
-      # secret here would hide which host a review actually hit.
-      ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
-      CLAUDE_REVIEW_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-5' }}
-      # Per-repo ceiling without editing this vendored file: set a repository
-      # variable. Unset, the script uses its own default (empty string fails
-      # int() and falls through). The one repo that needed a higher ceiling had
-      # edited this line by hand and tripped standards-drift doing it.
-      CLAUDE_REVIEW_MAX_TOKENS: ${{ vars.CLAUDE_REVIEW_MAX_TOKENS }}
-      # Characters of diff in one model call, set the same way. A longer diff
-      # is read whole, in parts of this size, so raising it means fewer and
-      # larger calls, not more of the diff read.
-      CLAUDE_REVIEW_MAX_CHARS: ${{ vars.CLAUDE_REVIEW_MAX_CHARS }}
-      # What one review may cost in US dollars, set the same way; the script
-      # default is 5. The cost is estimated before any call, and a review over
-      # it does not run (`over-budget` below).
-      CLAUDE_REVIEW_MAX_USD: ${{ vars.CLAUDE_REVIEW_MAX_USD }}
-      REVIEW_PROJECT_NAME: ${{ github.repository }}
-      PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_REPOSITORY: ${{ github.repository }}
-      REVIEW_SCOPE: ${{ github.event.inputs.review_scope || 'diff' }}
-    steps:
-      # The key is checked FIRST, and its absence is red.
-      #
-      # Without it the reviewer wrote "Skipped: ANTHROPIC_API_KEY is not
-      # configured" and exited zero, so the PR showed a green "Claude code
-      # review" check next to a review that never happened. A check that
-      # reports success while skipping is worse than one that fails: the green
-      # is what gets trusted, and review-standards.md feeds the auto-merge
-      # verdict. Two repos ran in exactly that state.
-      #
-      # Same reason this is a step and not an `if:` on the job: a skipped job
-      # also reports as not-failed.
-      - name: Require the review key
-        run: |
-          if [ -z "${ANTHROPIC_API_KEY}" ]; then
-            echo "::error::ANTHROPIC_API_KEY is not set for ${GITHUB_REPOSITORY}, so no review ran." \
-                 "Set it as an organization secret (visible to this repo) or a repo secret," \
-                 "or remove claude-review from docs/standards/.standards-include to stop asking for it."
-            {
-              echo "## Claude Code Review"
-              echo
-              echo "No review ran: \`ANTHROPIC_API_KEY\` is not configured for this repository."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+      HAS_OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      HAS_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      SUB_MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'sonnet' }}
+      API_MODEL: ${{ vars.CLAUDE_REVIEW_FALLBACK_MODEL || (vars.ANTHROPIC_BASE_URL != '' && 'openrouter/anthropic/claude-haiku-4.5') || 'claude-haiku-4-5' }}
+      # One prompt and one tool list for both routes.
+      REVIEW_PROMPT: |
+          You are reviewing pull request #${{ github.event.pull_request.number }} in
+          ${{ github.repository }}. The checkout is the PR merged into its base; HEAD^1 is
+          the base. You can read the repo and the PR, and nothing else: change no file and
+          post nothing. Your structured output is the whole result.
 
-      # Check out the base BRANCH, not the base SHA the event payload carries.
-      #
-      # `github.event.pull_request.base.sha` is the base tip as it stood when
-      # the PR was opened, and GitHub does not refresh it when the base moves.
-      # So a fix merged to the base after a PR was opened never reached that
-      # PR's reviews. Measured on one managed repo: a PR opened against the
-      # 8192-token reviewer stayed on it through every run AND re-run after
-      # master had moved to the 32000-token one, the checkout step logged the
-      # stale ref each time, and each review died on max_tokens. Rebasing the
-      # PR was the only way the fix could reach it. A branch name is resolved
-      # when the job runs, so it is whatever the base is NOW, re-runs included.
-      #
-      # This is still the trusted side of pull_request_target. The base branch
-      # is repository history that only push access can change, and nothing
-      # from the PR reaches this ref: its author picks the base from branches
-      # that already exist here, and fork PRs never enter the job (the `if:`
-      # above). What must never happen is checking out head.sha with secrets in
-      # the environment, and that is unchanged. The diff under review comes
-      # from the GitHub API by PR number. A file the API sends without a patch
-      # is diffed by git from this checkout to pull/<n>/head, fetched as
-      # objects into a ref of the reviewer's own (claude_review.py, pr_diff):
-      # the PR's files are read, never checked out or run. fetch-depth: 0 below
-      # puts the merge base on disk, and the token this step leaves in the git
-      # config authenticates that fetch.
-      #
-      # workflow_dispatch has no pull request, so it falls back to the sha of
-      # the ref it was dispatched on, as before.
-      - name: Checkout
+          Standards, in order: REVIEW.md at the repo root if it exists, then
+          docs/standards/review-standards.md, then docs/standards/coding-rules.md. Where a
+          standard is missing, use the general shape: correctness, security, tests,
+          maintainability.
+
+          Procedure:
+          1. List the changed files with `gh pr view ${{ github.event.pull_request.number }} --json files`
+             and read the PR body with `gh pr view ${{ github.event.pull_request.number }}`.
+          2. For each changed file that still exists, read it in full and read its diff with
+             `git diff HEAD^1 HEAD -- <path>`. Read callers and siblings where the change
+             could break them.
+          3. A file the PR deletes: do not review its old contents. Check only whether
+             anything that remains still refers to it (`git grep` for its path or names).
+          4. Lockfiles: do not review them; say that their resolved pins need a human or a
+             dependency tool.
+          5. Check every completion claim in the PR body against evidence in the diff.
+
+          A finding is BLOCKING only if it is a correctness bug, a security hole, a broken
+          build or test, data loss, or a claim in the PR body that the diff contradicts. Scope,
+          style, naming and documentation polish are findings, never blocking.
+
+          Return:
+          - verdict: "autoMerge" when nothing is blocking and no escalation surface from
+            review-standards.md is touched; otherwise "needs-operator".
+          - summary: one line.
+          - blocking: one entry per blocking finding, each starting with file:line. Empty
+            when there are none.
+          - comment_markdown: the review comment, in markdown: what you checked, then
+            findings with file:line, blocking ones first. Plain declarative sentences.
+      REVIEW_ARGS: >-
+        --max-turns 60
+        --allowedTools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git grep:*)"
+        --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch"
+        --json-schema '{"type":"object","additionalProperties":false,"properties":{"verdict":{"type":"string","enum":["autoMerge","needs-operator"]},"summary":{"type":"string"},"blocking":{"type":"array","items":{"type":"string"}},"comment_markdown":{"type":"string"}},"required":["verdict","summary","blocking","comment_markdown"]}'
+    steps:
+      - name: Check out the PR
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.pull_request.base.ref || github.sha }}
+          # The merge commit, with history, so HEAD^1 is the base it merges into.
           fetch-depth: 0
+          persist-credentials: false
 
-      # The reviewer's own parsing is tested BEFORE it is trusted to review.
-      # It failed silently once (thinking-block-first responses parsed to empty,
-      # posted "No review text returned", and passed CI on ~2,048 billed output
-      # tokens), so the response-shape handling now has to prove itself on every
-      # run. Pure and network-free: no key, no API call, ~0.0s.
-      # The base branch's reviewer, which passed the slow linear-time tests when
-      # it merged; re-timing a megabyte of input on every PR proves nothing new.
-      - name: Test the reviewer before reviewing
+      # The action installs Bun with oven-sh/setup-bun, which needs `unzip`. The
+      # self-hosted pool has none, and no sudo to add it (measured on kit #359:
+      # "Unable to locate executable file: unzip"). So the Bun the action pins,
+      # 1.4.4, is fetched here, checked against its published SHA-256, unpacked
+      # with Python's zipfile, and handed to the action. Bump the version, URL and
+      # sum together when the action's pin moves.
+      - name: Install Bun for the action
+        if: env.HAS_OAUTH == 'true' || env.HAS_API_KEY == 'true'
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/bun-1.4.4"
+          zip="$dir/bun-linux-x64.zip"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$zip" https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip
+          echo "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c  $zip" | sha256sum -c -
+          python3 -m zipfile -e "$zip" "$dir"
+          chmod +x "$dir/bun-linux-x64/bun"
+          "$dir/bun-linux-x64/bun" --version
+          echo "BUN_PATH=$dir/bun-linux-x64/bun" >> "$GITHUB_ENV"
+
+      - name: Review on the subscription
+        id: review
+        if: env.HAS_OAUTH == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
+        # The action writes `git config --global safe.bareRepository explicit`. The
+        # pool's runners share one user and one ~/.gitconfig, so that setting broke
+        # a concurrent job's bare-repo test on kit #359. Its global config goes to
+        # a per-job file instead.
         env:
-          REVIEWER_TESTS_SLOW: skip
-        run: python .github/scripts/test_claude_review.py
-
-      - name: Review with Claude
-        run: python .github/scripts/claude_review.py
-
-      - name: Print Claude review
-        if: always()
-        run: |
-          if [ -s claude-review.md ]; then
-            cat claude-review.md
-          else
-            echo "Claude review did not produce output."
-          fi
-
-      - name: Upload Claude review artifact
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          GIT_CONFIG_GLOBAL: ${{ runner.temp }}/claude-review.gitconfig
         with:
-          name: claude-review-${{ github.run_id }}
-          path: claude-review.md
-          if-no-files-found: ignore
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          path_to_bun_executable: ${{ env.BUN_PATH }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_ARGS }} --model ${{ env.SUB_MODEL }}
 
-      # always(), so a truncated or empty review is still POSTED where it can be
-      # read. The check colour is decided separately, in the step after this one.
-      - name: Post PR comment
-        if: always() && github.event_name == 'pull_request_target'
+      # THE KEY TRAVELS WITH THIS URL. vars.ANTHROPIC_BASE_URL is a repository
+      # variable, a lower bar than a secret, and the fallback sends
+      # ANTHROPIC_API_KEY to it. Same rule as harness-enforcer.yml: https://, or
+      # loopback by parsed hostname (never a prefix: 127.0.0.1.evil.test is not
+      # loopback). A refusal skips the fallback and the comment says why.
+      - name: Check the fallback's base URL
+        if: >-
+          (steps.review.outcome != 'success' || steps.review.outputs.structured_output == '') &&
+          env.HAS_API_KEY == 'true'
+        env:
+          BASE: ${{ vars.ANTHROPIC_BASE_URL }}
         run: |
-          if [ -s claude-review.md ]; then
-            if ! gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
-              -f body="$(cat claude-review.md)"; then
-              echo "Failed to post Claude review as a PR comment; see job summary." >&2
-            fi
-          fi
+          python3 - <<'URLEOF'
+          import os, urllib.parse
+          base = os.environ.get("BASE", "").strip()
+          try:
+              host = urllib.parse.urlsplit(base).hostname if base else None
+          except ValueError:
+              host = None
+          if base and not base.startswith("https://") and host not in ("127.0.0.1", "localhost", "::1"):
+              # repr() keeps a newline in the variable from writing a second env line.
+              msg = f"ANTHROPIC_BASE_URL must be https:// or loopback, because the API key is sent with it (got {base!r})"
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+                  handle.write(f"FALLBACK_REFUSED={msg}\n")
+              print(f"::error::{msg}")
+          URLEOF
 
-      - name: Write job summary
+      - name: Review on the API key (subscription unavailable)
+        id: fallback
+        if: >-
+          (steps.review.outcome != 'success' || steps.review.outputs.structured_output == '') &&
+          env.HAS_API_KEY == 'true' && env.FALLBACK_REFUSED == ''
+        continue-on-error: true
+        uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
+        env:
+          ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL || 'https://api.anthropic.com' }}
+          GIT_CONFIG_GLOBAL: ${{ runner.temp }}/claude-review.gitconfig
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          path_to_bun_executable: ${{ env.BUN_PATH }}
+          prompt: ${{ env.REVIEW_PROMPT }}
+          claude_args: ${{ env.REVIEW_ARGS }} --model ${{ env.API_MODEL }}
+
+      # Deterministic: post the comment, then pass or fail. A review that could not
+      # run is a red check that names which route failed, never a quiet green.
+      - name: Post the review and decide the check
         if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SUB_RESULT: ${{ steps.review.outputs.structured_output }}
+          API_RESULT: ${{ steps.fallback.outputs.structured_output }}
+          SUB_OUTCOME: ${{ steps.review.outcome }}
+          API_OUTCOME: ${{ steps.fallback.outcome }}
+          SUB_EXEC: ${{ steps.review.outputs.execution_file }}
+          API_EXEC: ${{ steps.fallback.outputs.execution_file }}
         run: |
-          if [ -s claude-review.md ]; then
-            cat claude-review.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Claude review did not produce output." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          python3 - <<'PYEOF'
+          import json, os, re, subprocess, sys
 
-      # A REVIEW THAT STOPPED EARLY DID NOT REVIEW THE REST.
-      #
-      # The truncation banner tells a human, but the green check is what gets
-      # trusted and what feeds the auto-merge verdict in review-standards.md. A
-      # review of PR #32 spent its entire 8,192-token ceiling on reasoning,
-      # emitted the words "This diff", billed $0.15, and passed. Same rule as
-      # the missing-key step at the top of this job: a check that pays, reports
-      # success, and verified an unknown fraction of the diff is worse than one
-      # that fails, because the green is what people act on.
-      #
-      # Runs LAST so the review is posted and summarised first.
-      - name: Require a complete review
-        if: always()
-        run: |
-          status="$(cat claude-review.status 2>/dev/null || echo missing)"
-          case "$status" in
-            ok|skipped)
-              echo "Claude review status: $status"
-              ;;
-            no-key)
-              # The reviewer had no key, so it read nothing. Whether that blocks
-              # depends on whether anyone COULD fix it -- and that is the actor,
-              # never the key's absence. A Dependabot pull_request is served the
-              # Dependabot secret store and can never be given ANTHROPIC_API_KEY,
-              # so no commit its author pushes would help. Everyone else can fix
-              # the key, so for them this is a failure.
-              if [ "${IS_DEPENDABOT:-false}" = "true" ]; then
-                echo "::notice::No Claude review ran: a Dependabot PR is never given" \
-                     "Actions secrets, so ANTHROPIC_API_KEY does not exist on this run" \
-                     "and no author action can create it. NOT a pass -- this diff was" \
-                     "not reviewed."
-              else
-                echo "::error::The Claude review did not run: ANTHROPIC_API_KEY is not" \
-                     "set, so no part of this diff was reviewed. Set the secret and re-run."
-                exit 1
-              fi
-              ;;
-            partial)
-              # A file never reached the model: GitHub sent no patch for it and
-              # git could not produce one, or the files API listed fewer files
-              # than the PR changes (it stops at 3,000). The comment names each
-              # file it can, each cause, and the fix for that cause; this line
-              # points there, because a count that moved mid-run is fixed by a
-              # re-run and only a PR past the limit by a split.
-              # A gap like this only warned at first (kit #284). It blocks
-              # because an unread file is an unreviewed change, whatever the
-              # rest of the review says. Raised in review on capaz#14.
-              echo "::error::The Claude review read only part of this diff. The PR comment" \
-                   "says what it did not read, why, and what to do. A file it" \
-                   "could not get a diff for: fix the cause the job log names, then re-run." \
-                   "A PR past GitHub's 3,000-file limit: split it."
-              exit 1
-              ;;
-            over-budget)
-              # The estimated cost was over CLAUDE_REVIEW_MAX_USD, so nothing was
-              # sent to the model. The review body gives the size, the estimate
-              # and the cap in effect; the cap is not echoed here because the raw
-              # variable can be a typo the script rejected. A manual run posts no
-              # PR comment, so there the body is in the job summary.
-              echo "::error::The Claude review did not run: its estimated cost is over the" \
-                   "cap. The PR comment, or the job summary on a manual run, gives the size" \
-                   "and the estimate. The operator decides: raise the CLAUDE_REVIEW_MAX_USD" \
-                   "repository variable and re-run, split the PR, or, for a full-codebase" \
-                   "run, lower CLAUDE_REVIEW_MAX_CHARS."
-              exit 1
-              ;;
-            truncated)
-              echo "::error::The Claude review hit its output-token ceiling and is incomplete," \
-                   "so an unknown part of this diff went unreviewed. Raise CLAUDE_REVIEW_MAX_TOKENS" \
-                   "(currently ${CLAUDE_REVIEW_MAX_TOKENS:-the script default}) and re-run."
-              exit 1
-              ;;
-            empty)
-              echo "::error::The Claude review returned no text. This is a tooling failure," \
-                   "not a clean bill of health. See the posted comment for stop_reason."
-              exit 1
-              ;;
-            failed)
-              echo "::error::The Claude review did not run: the API returned an error or the" \
-                   "reviewer stopped on one it does not handle, so no part of this diff was" \
-                   "reviewed. The posted comment says which, with the status code and response" \
-                   "body for an API error. A spending ceiling on the key and a rate limit both" \
-                   "arrive as 429, and the body says which."
-              exit 1
-              ;;
-            *)
-              echo "::error::No Claude review status was written, so nothing proves a review ran." \
-                   "Treating that as a failure rather than a pass."
-              exit 1
-              ;;
-          esac
+          # Key-shaped strings, scrubbed from everything this step prints or posts.
+          # The model reads the whole checkout, so a secret someone committed could
+          # otherwise be quoted into a PR comment. TruffleHog is the real control
+          # for committed secrets; this is the second layer on the way out.
+          # Specific prefixes only: a generic "key-..." pattern rewrote ordinary
+          # words ("key-shaped") in a real review on kit #359.
+          KEY_SHAPES = re.compile(
+              r"\bsk-[A-Za-z0-9_\-]{16,}"
+              r"|\bgh[pousr]_[A-Za-z0-9]{20,}"
+              r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
+              r"|\bAKIA[0-9A-Z]{16}\b"
+              r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+          )
+
+          def scrub(text):
+              return KEY_SHAPES.sub(lambda m: m.group(0)[:4] + "<redacted>", text)
+
+          def reason(path):
+              # The action hides Claude's messages from the log; its execution file
+              # keeps the final result, whose text is the API's error when the call
+              # failed ("Credit balance is too low", "invalid x-api-key", ...).
+              # One line, key-shaped strings scrubbed.
+              try:
+                  with open(path, encoding="utf-8") as handle:
+                      data = json.load(handle)
+              except (OSError, ValueError, TypeError):
+                  return ""
+              for item in reversed(data if isinstance(data, list) else [data]):
+                  if isinstance(item, dict) and item.get("type") == "result":
+                      text = item.get("result")
+                      if isinstance(text, str) and text.strip():
+                          return scrub(" ".join(text.split()))[:300]
+              return ""
+
+          def load(raw):
+              try:
+                  value = json.loads(raw) if raw and raw.strip() else None
+              except ValueError:
+                  return None
+              return value if isinstance(value, dict) else None
+
+          def post(body):
+              body = body if len(body) <= 60000 else body[:60000] + "\n\n(truncated at 60,000 characters)"
+              subprocess.run(["gh", "pr", "comment", os.environ["PR"], "--body-file", "-"],
+                             input=body, text=True, check=True)
+
+          sub, api = load(os.environ.get("SUB_RESULT")), load(os.environ.get("API_RESULT"))
+          if sub:
+              result, route = sub, f"the subscription (`{os.environ['SUB_MODEL']}`)"
+          elif api:
+              result, route = api, f"the API key fallback (`{os.environ['API_MODEL']}`)"
+          else:
+              def line(name, outcome, present, secret, execution):
+                  state = outcome or "skipped"
+                  if present != "true":
+                      return f"- {name}: {state} (no `{secret}` secret)"
+                  if secret == "ANTHROPIC_API_KEY" and os.environ.get("FALLBACK_REFUSED"):
+                      return f"- {name}: refused. {scrub(os.environ['FALLBACK_REFUSED'])}"
+                  why = reason(execution)
+                  return f"- {name}: {state}" + (f". The API said: {why}" if why else "")
+              post("\n".join([
+                  "## Claude Code Review", "",
+                  "**The review did not run.**", "",
+                  line("Subscription", os.environ.get("SUB_OUTCOME"), os.environ["HAS_OAUTH"],
+                       "CLAUDE_CODE_OAUTH_TOKEN", os.environ.get("SUB_EXEC", "")),
+                  line("API key fallback", os.environ.get("API_OUTCOME"), os.environ["HAS_API_KEY"],
+                       "ANTHROPIC_API_KEY", os.environ.get("API_EXEC", "")),
+                  "",
+                  "With the subscription out of usage and no credit on the key, the review is dark "
+                  "until one comes back. Re-run this job then.",
+              ]))
+              print("::error::The Claude review did not run; see the PR comment for which route failed.")
+              sys.exit(1)
+
+          blocking = [scrub(str(b).strip()) for b in result.get("blocking") or [] if str(b).strip()]
+          text = scrub((result.get("comment_markdown") or result.get("summary") or "").strip())
+          post("## Claude Code Review\n\n" + text +
+               f"\n\n---\nReviewed on {route}. Verdict: `{result.get('verdict')}`; "
+               f"{len(blocking)} blocking finding(s).")
+          for finding in blocking:
+              print(f"::error::{finding}")
+          sys.exit(1 if blocking else 0)
+          PYEOF
