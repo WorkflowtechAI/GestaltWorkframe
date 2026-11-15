@@ -40,12 +40,17 @@ spent in one place. It is not spread evenly over everything.
 
 ## Scope control
 
-- Do the requested job. Do not bundle unrelated refactors, docs, dependency upgrades, or feature ideas.
-- If the adjacent issue matters, record it as follow-up instead of silently expanding the change.
+- Do the requested job, and fix the adjacent problems you find on the way: the
+  broken sibling, the stale doc, the test that lies. A problem reported and left
+  behind comes back as its own bug report.
+- Give each fix its own commit, and name every extra fix in the summary. An
+  unrelated fix that needs its own review goes in its own PR.
+- Feature ideas, large refactors and dependency upgrades are proposals for the
+  operator, not drive-by changes.
 - Prefer small PRs with one reason to exist.
 - Preserve public contracts unless the task explicitly changes them.
-- Fixing the same defect everywhere it lives is part of the requested job, not the
-  bundling this section forbids. Bundling is an unrelated change riding along.
+- Fixing the same defect everywhere it lives is part of the requested job (next
+  section).
 
 ### Fix the class, not the instance
 

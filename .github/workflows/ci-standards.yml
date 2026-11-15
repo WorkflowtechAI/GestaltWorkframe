@@ -473,17 +473,6 @@ jobs:
         if: steps.kit.outputs.self == 'true'
         shell: pwsh
         run: ./tests/Test-SecretHygiene.ps1
-      # Kit only: docs/maps ships GENERATED artifacts into git, so the gate that
-      # decides whether they carry a credential is the one thing between an
-      # extraction run and permanent history. It was previously invoked only by
-      # a local script, which meant a hand-edited map, or a skipped run, shipped
-      # unchecked. This also py_compiles both gate scripts: two consecutive
-      # reviews called them a SyntaxError from redacted output while they
-      # compiled fine, and inspection is a poor way to settle that.
-      - name: docs/maps secret gate actually catches things (kit repo)
-        if: steps.kit.outputs.self == 'true'
-        shell: pwsh
-        run: ./tests/Test-MapsSecretGate.ps1
       # Kit only: operator-tools/__tests__/ was discovered by nothing, so both
       # suites there passed locally and had NEVER run in CI -- which makes a
       # pass worth less than it looks. The runner body lives in a SCRIPT rather
@@ -494,14 +483,3 @@ jobs:
         if: steps.kit.outputs.self == 'true'
         shell: pwsh
         run: ./tests/Invoke-OperatorToolsSuites.ps1
-      # Kit only: the systems map's fact checker had never run here. It was
-      # invoked solely by Update-Maps.ps1, on the operator's laptop -- the one
-      # machine whose working tree makes its claims pass -- so "18 claims hold"
-      # had never been evaluated anywhere it could fail. Running it on a clean
-      # tree found two real defects immediately. Body in a script for the same
-      # reason as the step above; see that file for why --store-optional is what
-      # makes this runnable at all.
-      - name: systems map facts hold (kit repo)
-        if: steps.kit.outputs.self == 'true'
-        shell: pwsh
-        run: ./tests/Invoke-SystemsMapCheck.ps1

@@ -188,11 +188,9 @@ And for anything already flagged safe: **who is assumed to be asking?**
 **This document vendors. The check does not, and that is the important
 sentence.**
 
-The kit enforces these rules with `tests/harness-checks.sh
-untrusted-input-floors`, wired as a merge-blocking HARNESS constraint. That
-check names `operator-admin/lib/safe-url.ts`, `lib/untrusted-text.ts` and two
-specific symbols — it is a tripwire for THIS codebase and it would pass
-vacuously in yours, which is worse than absent.
+The kit's own tripwire for these rules named files in the operator-admin panel,
+and it was retired with the panel on 2026-11-14. No check anywhere enforces this
+document today.
 
 So the honest state after vendoring is: your repo has the doctrine and no
 enforcement. The kit has been here before. `secrets.md` sat vendored in seven

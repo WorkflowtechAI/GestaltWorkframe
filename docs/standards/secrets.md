@@ -12,20 +12,20 @@ This file records where secrets should live. It must never contain secret values
 
 Provider API keys (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) have exactly one
 value store on the operator's machine: the gitignored
-`operator-admin/.env.local`. Enter and rotate them there — via the dashboard
-**Settings** tab, which writes the file, masks the value in the UI, and verifies
-it against the provider on save. Never hand-edit keys into tracked files, and
-never paste a key value into a chat, issue, log, or screenshot.
+`operator-admin/.env.local` (the folder's panel code is archived; the file is
+still the store). Enter and rotate keys by editing that file, then confirm with
+`operator-tools/Get-KitSecret.ps1 <NAME>`. Keys stay out of tracked files, and a
+key value never goes into a chat, issue, log, or screenshot.
 
 Two kinds of consumer read from that one store:
 
-- **Local factory** — the panel, the routing workers, and the interactive
-  surface resolve keys live from `.env.local` (process env first, file second),
-  so a freshly entered key takes effect without a restart. The local dispatcher
-  runs `claude -p` under the operator's Claude login, so it needs no key here.
+- **Local tools** — the kit's own scripts (`Sync-Secrets.ps1`,
+  `Get-KitSecret.ps1`) read the file. Claude Code sessions run under the
+  operator's Claude login and need no key here.
 - **CI** — the per-repo `claude-review` workflow runs on GitHub and cannot read
-  the local file, so it needs `ANTHROPIC_API_KEY` as a repo Actions secret.
-  GitHub secrets are write-only (no read-back, no copy-across), so they are
+  the local file, so it needs repo Actions secrets: `CLAUDE_CODE_OAUTH_TOKEN`
+  (the operator's Claude subscription, from `claude setup-token`; the review runs
+  on it first) and `ANTHROPIC_API_KEY` (the fallback). GitHub secrets are write-only (no read-back, no copy-across), so they are
   re-issued from the local source by `operator-tools/Sync-Secrets.ps1`, which
   fans the value out via `gh secret set` without it ever touching a command
   line, console, or log. Set once locally → `Sync-Secrets.ps1` → every repo's CI.
@@ -42,14 +42,13 @@ box can. So the model is not "guard the file" — it is:
   and an exit code (0 set, 1 unset). No value path. Safe to expose and to let any
   readiness check or agent call.
 - **Value** — only ever *used* by a broker that performs one action and returns
-  the result, never the key: `Sync-Secrets.ps1` sets a GitHub Actions secret; the
-  panel/workers resolve it in-process (`lib/settings.ts` `resolveKey`) and call
-  the provider server-side; CI reads it from the repo's Actions secret. Agents get
-  brokered actions and scoped tokens, **not** raw keys.
+  the result, never the key: `Sync-Secrets.ps1` sets a GitHub Actions secret, and
+  CI reads it from the repo's Actions secret. Agents get brokered actions and
+  scoped tokens, **not** raw keys.
 
 Do not add a "print the value" command, and do not teach one in a repo: that is an
-exfiltration signpost, not a boundary. If a key is missing the answer is "set it
-in the dashboard Settings tab," never "go find it."
+exfiltration signpost, not a boundary. If a key is missing the answer is "the
+operator sets it in `.env.local`," never "go find it."
 
 The threat that matters is **untrusted external code, not your own directed
 agents**: fork-PR CI, third-party dependencies, connected tools/MCP servers, and
@@ -57,11 +56,10 @@ untrusted repo content that could hijack an otherwise-trusted agent. A file stor
 is fine against agents you trust to do directed work; the defenses that matter
 live at the ingress points where someone else's code shows up:
 
-- **CI / fork PRs** — the claude-review workflow runs on `pull_request_target`
-  but guards `head.repo.full_name == github.repository`, so a fork PR gets no job
-  and no secret; it also checks out the base SHA (not the PR head) and only diffs,
-  never executes, PR code. Other CI uses plain `pull_request`: fork PRs get a
-  read-only token and no secrets.
+- **CI / fork PRs** — every workflow, the claude-review one included, uses plain
+  `pull_request`, so a fork PR gets a read-only token and no secrets, and
+  claude-review also guards `head.repo.full_name == github.repository`. Its model
+  reads the checkout and runs no PR code: its tools are read-only.
 - **Self-hosted runners** — a fork PR can otherwise run its code on your hardware.
   Require approval for outside-collaborator / fork-PR workflows, and run the runner
   as a dedicated unprivileged user (see `self-hosted-runner-setup.md`). This is the
@@ -111,11 +109,9 @@ of its own* — not that it opted out of scanning. The kit is the one repo that
 declines today, because its copy carries an exclude file and a base/head
 override the generic template should not.
 
-A decline is not on the honour system: `Get-ProjectStatus.ps1` reports
-`no secret scanning` for any repo whose workflows mention no scanner at all, and
-it looks for the tool (`gitleaks`, `trufflehog`, `detect-secrets`), not for this
-file's name — so a repo with its own scanner passes and a repo with nothing is
-visible. That report is the audit; the vendored file is only the default.
+A decline is audited by hand: the repo's workflows must name a scanner
+(`gitleaks`, `trufflehog`, `detect-secrets`). The collector that reported
+`no secret scanning` automatically was archived with the factory on 2026-11-14.
 
 ## SSH
 
